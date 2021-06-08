@@ -1,0 +1,2 @@
+revise the path in the program for the parameter.txt and save_time.txt, which respresent the ploynomial coefficient and the time allocation for each segment. 
+The time allocation need to be re-study, it is now according to the ladder-shaped methodology.
