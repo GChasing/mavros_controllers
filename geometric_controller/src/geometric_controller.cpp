@@ -42,6 +42,8 @@
 
 using namespace Eigen;
 using namespace std;
+#define PERIOD 250 //define the controller period 250Hz
+
 // Constructor
 geometricCtrl::geometricCtrl(const ros::NodeHandle &nh, const ros::NodeHandle &nh_private)
     : nh_(nh),
@@ -50,15 +52,15 @@ geometricCtrl::geometricCtrl(const ros::NodeHandle &nh, const ros::NodeHandle &n
       ctrl_enable_(true),
       landing_commanded_(false),
       feedthrough_enable_(false),
-      node_state(WAITING_FOR_HOME_POSE) {
-  referenceSub_ =
-      nh_.subscribe("reference/setpoint", 1, &geometricCtrl::targetCallback, this, ros::TransportHints().tcpNoDelay());
-  flatreferenceSub_ = nh_.subscribe("reference/flatsetpoint", 1, &geometricCtrl::flattargetCallback, this,
-                                    ros::TransportHints().tcpNoDelay());
-  yawreferenceSub_ =
-      nh_.subscribe("reference/yaw", 1, &geometricCtrl::yawtargetCallback, this, ros::TransportHints().tcpNoDelay());
-  multiDOFJointSub_ = nh_.subscribe("command/trajectory", 1, &geometricCtrl::multiDOFJointCallback, this,
-                                    ros::TransportHints().tcpNoDelay());
+      node_state(None) {
+  // referenceSub_ =
+  //     nh_.subscribe("reference/setpoint", 1, &geometricCtrl::targetCallback, this, ros::TransportHints().tcpNoDelay());
+  // flatreferenceSub_ = nh_.subscribe("reference/flatsetpoint", 1, &geometricCtrl::flattargetCallback, this,
+  //                                   ros::TransportHints().tcpNoDelay());
+  // yawreferenceSub_ =
+  //     nh_.subscribe("reference/yaw", 1, &geometricCtrl::yawtargetCallback, this, ros::TransportHints().tcpNoDelay());
+  // multiDOFJointSub_ = nh_.subscribe("command/trajectory", 1, &geometricCtrl::multiDOFJointCallback, this,
+  //                                   ros::TransportHints().tcpNoDelay());
   mavstateSub_ =
       nh_.subscribe("mavros/state", 1, &geometricCtrl::mavstateCallback, this, ros::TransportHints().tcpNoDelay());
   mavposeSub_ = nh_.subscribe("mavros/local_position/pose", 1, &geometricCtrl::mavposeCallback, this,
@@ -66,7 +68,7 @@ geometricCtrl::geometricCtrl(const ros::NodeHandle &nh, const ros::NodeHandle &n
   mavtwistSub_ = nh_.subscribe("mavros/local_position/velocity_local", 1, &geometricCtrl::mavtwistCallback, this,
                                ros::TransportHints().tcpNoDelay());
   ctrltriggerServ_ = nh_.advertiseService("tigger_rlcontroller", &geometricCtrl::ctrltriggerCallback, this);
-  cmdloop_timer_ = nh_.createTimer(ros::Duration(0.01), &geometricCtrl::cmdloopCallback,
+  cmdloop_timer_ = nh_.createTimer(ros::Duration(1.0f/PERIOD), &geometricCtrl::cmdloopCallback,
                                    this);  // Define timer for constant loop rate
   statusloop_timer_ = nh_.createTimer(ros::Duration(1), &geometricCtrl::statusloopCallback,
                                       this);  // Define timer for constant loop rate
@@ -101,7 +103,7 @@ geometricCtrl::geometricCtrl(const ros::NodeHandle &nh, const ros::NodeHandle &n
   nh_private_.param<int>("posehistory_window", posehistory_window_, 200);
   nh_private_.param<double>("init_pos_x", initTargetPos_x_, 0.0);
   nh_private_.param<double>("init_pos_y", initTargetPos_y_, 0.0);
-  nh_private_.param<double>("init_pos_z", initTargetPos_z_, 2.0);
+  nh_private_.param<double>("init_pos_z", initTargetPos_z_, 0.0);
 
   targetPos_ << initTargetPos_x_, initTargetPos_y_, initTargetPos_z_;  // Initial Position
   targetVel_ << 0.0, 0.0, 0.0;
@@ -222,8 +224,146 @@ bool geometricCtrl::landCallback(std_srvs::SetBool::Request &request, std_srvs::
   return true;
 }
 
+geometry_msgs::PoseStamped pose;
+void geometricCtrl::pubFirstPosition()
+{
+  pose.header.stamp = ros::Time::now();
+  pose.pose.position.z = 1;
+  target_pose_pub_.publish(pose);
+  // ROS_INFO_THROTTLE(1,"publish the position local...");
+}
+
+#define DELAY_ACCURACY 50
+bool geometricCtrl::is_reach_target()
+{
+  static uint16_t count = 0;
+  float error_z = mavPos_(2) - pose.pose.position.z;
+  if(fabs(error_z)<0.2){
+    count ++;
+  }else{
+    count = 0;
+  }
+  if(DELAY_ACCURACY == count){
+    return 1;
+  }else{
+    return 0;
+  }
+}
+
+Eigen::Vector3d getPosPoly( Eigen::Matrix<double,MINISNAP_ROW,MINISNAP_COL> parameter, int k, double t )
+{
+    Eigen::Vector3d ret;
+    // Eigen::Matrix<double,3,8>vector1x8;
+    Eigen::VectorXd time = Eigen::VectorXd::Zero(8);
+    Eigen::Matrix<double,1,24>poly_parameter;
+    for (int dim = 0; dim < 3; dim++ )
+    {
+      poly_parameter = parameter.row(k);
+      Eigen::VectorXd vector1x8(8);
+      vector1x8 = poly_parameter.segment(dim*8, 8);     
+      for(int j = 0; j < 8; j ++){
+        if(j==0)
+            time(j) = 1.0;
+        else
+            time(j) = pow(t, j);
+      }
+      ret(dim) = vector1x8.dot(time);
+        //cout << "dim:" << dim << " coeff:" << coeff << endl;
+    }
+    return ret;
+}
+
+Eigen::Vector3d getVelPoly( Eigen::Matrix<double,MINISNAP_ROW,MINISNAP_COL> parameter, int k, double t )
+{
+    Eigen::Vector3d ret;
+    // Eigen::Matrix<double,3,8>vector1x8;
+    Eigen::VectorXd time = Eigen::VectorXd::Zero(8);
+    Eigen::Matrix<double,1,24>poly_parameter;
+    for (int dim = 0; dim < 3; dim++ )
+    {
+      poly_parameter = parameter.row(k);
+      Eigen::VectorXd vector1x8(8);
+      vector1x8 = poly_parameter.segment(dim*8, 8);     
+      for(int j = 0; j < 8; j ++){
+        if(j==0)
+            time(j) = 0.0;
+        else if (j==1){
+          time(j) = 1.0;
+        }
+        else
+            time(j) = j*pow(t, j-1);
+      }
+      ret(dim) = vector1x8.dot(time);
+        //cout << "dim:" << dim << " coeff:" << coeff << endl;
+    }
+    return ret;
+}
+
+Eigen::Vector3d getAccPoly( Eigen::Matrix<double,MINISNAP_ROW,MINISNAP_COL> parameter, int k, double t )
+{
+    Eigen::Vector3d ret;
+    // Eigen::Matrix<double,3,8>vector1x8;
+    Eigen::VectorXd time = Eigen::VectorXd::Zero(8);
+    Eigen::Matrix<double,1,24>poly_parameter;
+    for (int dim = 0; dim < 3; dim++ )
+    {
+      poly_parameter = parameter.row(k);
+      Eigen::VectorXd vector1x8(8);
+      vector1x8 = poly_parameter.segment(dim*8, 8);     
+      for(int j = 0; j < 8; j ++){
+        if(j<=1)
+            time(j) = 0.0;
+        else if (j==2){
+          time(j) = 2.0;
+        }
+        else
+            time(j) = j*(j-1)*pow(t, j-2);
+      }
+      ret(dim) = vector1x8.dot(time);
+        //cout << "dim:" << dim << " coeff:" << coeff << endl;
+    }
+    return ret;
+}
+
+
+
+ros::Time time_start;
+bool geometricCtrl::Get_Target_Pos_Vel_Acc()
+{
+  static int time_count = 0;
+  ros::Time time_now = ros::Time::now();
+  double time_during = (time_now - time_start).toSec();
+  if(time_during > poly_timer(time_count)){
+    time_start = ros::Time::now();
+    time_count ++;
+  }
+  std::cout<< time_during<<"\t"<<time_count<<"\t"<<node_state<<std::endl;
+  // ROS_INFO_THROTTLE(0.5,"time_during=%f\t time_count=%f\t node_state=%d",time_during,time_count,node_state);
+  if(time_count <8 ){
+      targetPos_ = getPosPoly(parameter, time_count, time_during);
+      targetVel_ = getVelPoly(parameter, time_count, time_during);
+      targetAcc_ = getAccPoly(parameter, time_count, time_during);
+      return true;
+  }else{
+      ROS_WARN("Set all the position finished... begin to land...");
+      return false;
+  }
+  // targetVel_ = getVelPoly();
+  // targetAcc_ = getAccPoly();
+}
+
+
 void geometricCtrl::cmdloopCallback(const ros::TimerEvent &event) {
+  // std::cout<<"node_state = "<<node_state<<std::endl;
   switch (node_state) {
+    case GET_INIT_POS:
+      pubFirstPosition();
+      if(is_reach_target()){
+        node_state = MISSION_EXECUTION;
+        time_start = ros::Time::now();
+        ROS_INFO("Reach the target position...");
+      }
+      break;
     case WAITING_FOR_HOME_POSE:
       waitForPredicate(&received_home_pose, "Waiting for home pose...");
       ROS_INFO("Got pose! Drone Ready to be armed.");
@@ -231,6 +371,7 @@ void geometricCtrl::cmdloopCallback(const ros::TimerEvent &event) {
       break;
 
     case MISSION_EXECUTION:
+      if(!Get_Target_Pos_Vel_Acc()){ node_state = LANDING; break; }
       if (!feedthrough_enable_) computeBodyRateCmd(cmdBodyRate_, targetPos_, targetVel_, targetAcc_);
       pubReferencePose(targetPos_, q_des);
       pubRateCommands(cmdBodyRate_, q_des);
@@ -252,6 +393,10 @@ void geometricCtrl::cmdloopCallback(const ros::TimerEvent &event) {
       ROS_INFO("Landed. Please set to position control and disarm.");
       cmdloop_timer_.stop();
       break;
+    default:
+      pubFirstPosition();
+      // std::cout<<"Is this threading running?"<<std::endl;
+      break;
   }
 }
 
@@ -272,9 +417,15 @@ void geometricCtrl::statusloopCallback(const ros::TimerEvent &event) {
       if (!current_state_.armed && (ros::Time::now() - last_request_ > ros::Duration(5.0))) {
         if (arming_client_.call(arm_cmd_) && arm_cmd_.response.success) {
           ROS_INFO("Vehicle armed");
+        }else{
+          ROS_WARN("Arm the vehicle failed...");
         }
         last_request_ = ros::Time::now();
       }
+    }
+    if (current_state_.mode == "OFFBOARD" && current_state_.armed && (MISSION_EXECUTION != node_state))
+    {
+        node_state = GET_INIT_POS;
     }
   }
   pubSystemStatus();

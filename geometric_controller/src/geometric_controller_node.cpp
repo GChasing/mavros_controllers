@@ -39,18 +39,56 @@
  */
 
 #include "geometric_controller/geometric_controller.h"
+#include <iostream>
+#include <fstream>
+
 
 int main(int argc, char** argv) {
   ros::init(argc, argv, "geometric_controller");
   ros::NodeHandle nh("");
   ros::NodeHandle nh_private("~");
 
+
+  std::fstream infile;
+  infile.open("/home/chasing/Downloads/mavros_controller/parameter.txt",std::ios::in);
+  if(!infile.is_open()){
+      ROS_ERROR("error for load the parameters.txt....");
+      exit(EXIT_FAILURE);
+  }else{
+        for(uint8_t i=0;i<MINISNAP_ROW;i++){
+            for(uint8_t j=0;j<MINISNAP_COL;j++){
+                infile >> parameter(i,j);
+            }
+        }
+  }
+  infile.close();
+  for(uint8_t i=0;i<MINISNAP_ROW;i++){
+      for(uint8_t j=0;j<MINISNAP_COL;j++){
+            std::cout<< parameter(i,j)<<"\t";
+      }
+      std::cout<<std::endl;
+  }
+
+  std::fstream timefiles;
+  timefiles.open("/home/chasing/Downloads/mavros_controller/save_timer.txt",std::ios::in);
+  if(!timefiles.is_open()){
+      ROS_ERROR("error for load the timer.txt...");
+      exit(EXIT_FAILURE);
+  }else{
+    for(uint8_t i=0;i<MINISNAP_ROW;i++){
+      timefiles >> poly_timer(i);
+    }
+    ROS_INFO("reading the timer data successfully...");
+  }
+  timefiles.close();
+
+
   geometricCtrl* geometricController = new geometricCtrl(nh, nh_private);
 
-  dynamic_reconfigure::Server<geometric_controller::GeometricControllerConfig> srv;
-  dynamic_reconfigure::Server<geometric_controller::GeometricControllerConfig>::CallbackType f;
-  f = boost::bind(&geometricCtrl::dynamicReconfigureCallback, geometricController, _1, _2);
-  srv.setCallback(f);
+  // dynamic_reconfigure::Server<geometric_controller::GeometricControllerConfig> srv;
+  // dynamic_reconfigure::Server<geometric_controller::GeometricControllerConfig>::CallbackType f;
+  // f = boost::bind(&geometricCtrl::dynamicReconfigureCallback, geometricController, _1, _2);
+  // srv.setCallback(f);
 
   ros::spin();
   return 0;

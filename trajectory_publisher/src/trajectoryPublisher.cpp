@@ -177,6 +177,9 @@ void trajectoryPublisher::pubflatrefState() {
   msg.acceleration.x = a_targ(0);
   msg.acceleration.y = a_targ(1);
   msg.acceleration.z = a_targ(2);
+  //std::cout<<"msg.type_mask="<<pubreference_type_<<"\t"<<"msg.position.x="<<msg.position.x<<"\t"<<
+  //    "msg.velocity.z="<<msg.velocity.x<<"\t"<<"msg.acceleration.x="<<msg.acceleration.x<<std::endl;
+  // ROS_INFO_THROTTLE(1, "msg.type_mask = "<<msg.type_mask<<"msg.position.x"<<msg.position.x<<"msg.position.y"<<msg.position.y<<"msg.position.z"<< msg.position.z);
   flatreferencePub_.publish(msg);
 }
 

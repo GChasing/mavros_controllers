@@ -61,7 +61,7 @@
 #include <nav_msgs/Odometry.h>
 #include <nav_msgs/Path.h>
 #include <std_msgs/Float32.h>
-#include <Eigen/Dense>
+#include <eigen3/Eigen/Core>
 
 #include <controller_msgs/FlatTarget.h>
 #include <dynamic_reconfigure/server.h>
@@ -74,6 +74,12 @@
 
 #define ERROR_QUATERNION 1
 #define ERROR_GEOMETRIC 2
+
+#define MINISNAP_COL 24
+#define MINISNAP_ROW 8
+
+Eigen::Matrix<double,MINISNAP_ROW,MINISNAP_COL>parameter;
+Eigen::Matrix<float,MINISNAP_ROW,1>poly_timer;
 
 using namespace std;
 using namespace Eigen;
@@ -133,7 +139,9 @@ class geometricCtrl {
 
   double initTargetPos_x_, initTargetPos_y_, initTargetPos_z_;
   Eigen::Vector3d targetPos_, targetVel_, targetAcc_, targetJerk_, targetSnap_, targetPos_prev_, targetVel_prev_;
+  public:
   Eigen::Vector3d mavPos_, mavVel_, mavRate_;
+  private:
   Eigen::Vector3d last_ref_acc_{Eigen::Vector3d::Zero()};
   double mavYaw_;
   Eigen::Vector3d g_;
@@ -145,6 +153,9 @@ class geometricCtrl {
   double Kpos_x_, Kpos_y_, Kpos_z_, Kvel_x_, Kvel_y_, Kvel_z_;
   int posehistory_window_;
 
+  void pubFirstPosition();
+  bool Get_Target_Pos_Vel_Acc();
+  bool is_reach_target();
   void pubMotorCommands();
   void pubRateCommands(const Eigen::Vector4d &cmd, const Eigen::Vector4d &target_attitude);
   void pubReferencePose(const Eigen::Vector3d &target_position, const Eigen::Vector4d &target_attitude);
@@ -175,7 +186,7 @@ class geometricCtrl {
   Eigen::Vector4d jerkcontroller(const Eigen::Vector3d &ref_jerk, const Eigen::Vector3d &ref_acc,
                                  Eigen::Vector4d &ref_att, Eigen::Vector4d &curr_att);
 
-  enum FlightState { WAITING_FOR_HOME_POSE, MISSION_EXECUTION, LANDING, LANDED } node_state;
+  enum FlightState { WAITING_FOR_HOME_POSE, MISSION_EXECUTION, LANDING, LANDED, GET_INIT_POS, None } node_state;
 
   template <class T>
   void waitForPredicate(const T *pred, const std::string &msg, double hz = 2.0) {
